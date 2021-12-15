@@ -1,0 +1,16 @@
+{
+  "name": "worker-cron-js",
+  "version": "1.0.0",
+  "description": "tasks scheduler for browsers",
+  "main": "index.js",
+  "repository": "https://github.com/art0s/worker-cron-js.git",
+  "author": "art0s",
+  "license": "MIT",
+  "scripts": {
+    "build": "tsc",
+    "serve": "tsc --watch"
+  },
+  "devDependencies": {
+    "typescript": "^4.5.4"
+  }
+}
