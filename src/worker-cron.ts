@@ -8,34 +8,40 @@
 //import { Task } from './types';
 // copied interface to here for bug reason: https://github.com/microsoft/TypeScript/issues/41513
 interface Task {
-    sourceId: string;
-    innerId: number;
-    task: 'request' | 'doubleRequest';
-    schedule: string;
-    url: string;
+    // task's ID
+    id: number;
+    // command - what to do
+    task: 'remove-task' | 'clone-vds';
+    // worker
+    worker: Worker | null;
+}
+
+interface CloneVdsTask extends Task {
+    apiUrl: string;
     params: any;
-    readonly minutesPeriod: number;
     minutesLeft: number;
-    readonly maxTries: number;
-    currentTries: number;
-    worker?: Worker;
-    paramsConstructor?: string;
-    successCondition?: Function;
-    paramsForDoubleRequest?: any;
 }
 
 //=====================================================================================================================
 // vars
 //=====================================================================================================================
-let timer = null;
-const timeOut = 15000;
-let tasksList: Array<Task> = [];
+let Timer = null;
+const TimeOut = 60000;
+let TasksList: Array<CloneVdsTask> = [];
+
+//=====================================================================================================================
+// find task by ID
+//=====================================================================================================================
+const findTaskById = (id: number): boolean => {
+    if (!TasksList || !TasksList.length) return false;
+    return TasksList.some((t) => t && t.id === id);
+};
 
 //=====================================================================================================================
 // function parses schedule
 //=====================================================================================================================
 const parseSchedule = (schedule: string): number => {
-    if (!schedule || !/^\d{1,2}['m'|'h'|'d']{1}$/i.test(schedule)) return -1;
+    if (!schedule || !/^\d{1,2}['m'|'h']{1}$/i.test(schedule)) return -1;
 
     const modifierStr = schedule.slice(-1);
     const modifierNum = parseInt(schedule.slice(0, -1), 10);
@@ -45,8 +51,6 @@ const parseSchedule = (schedule: string): number => {
             return modifierNum;
         case 'h':
             return modifierNum * 60;
-        case 'd':
-            return modifierNum * 1440;
         default:
             return -1;
     }
@@ -55,80 +59,60 @@ const parseSchedule = (schedule: string): number => {
 //=====================================================================================================================
 // create task based on given params
 //=====================================================================================================================
-const createTask = (params: any): boolean => {
-    if (!params || !params.task) return false;
-    if ((params.task === 'request' || params.task === 'doubleRequest') && !params.url) return false;
+const createTask = (data: any) => {
+    if (!data || !data.task || !data.id) return;
 
-    const minutesPeriod = parseSchedule(params.schedule);
-    if (minutesPeriod <= 0) return false;
+    const { id, task, params, apiUrl, step, status } = data;
+    if (findTaskById(id)) return;
 
-    const {
-        sourceId,
-        innerId,
+    const newTask: CloneVdsTask = {
+        id,
         task,
-        schedule,
-        url,
-        maxTries,
-        paramsConstructor,
-        successCondition,
-        paramsForDoubleRequest,
-        ...data
-    } = params;
-    if (findTaskBySourceIdOrInnerId(String(sourceId), innerId)) return false;
-
-    const newTask: Task = {
-        sourceId: String(sourceId),
-        innerId: innerId || Date.now(),
-        task,
-        schedule: schedule || '10m',
-        url,
-        minutesPeriod,
-        minutesLeft: -1, // for first time start
-        maxTries,
-        currentTries: 0,
-        params: data,
+        params,
+        apiUrl,
+        minutesLeft: 0,
         worker: null,
-        paramsConstructor: paramsConstructor || null,
-        paramsForDoubleRequest: paramsForDoubleRequest || null,
     };
 
-    if (successCondition && successCondition.length) {
-        try {
-            newTask.successCondition = new Function('data', successCondition);
-        } catch (err) {
-            newTask.successCondition = function (data) {
-                return false;
-            };
-        }
+    if (newTask.task === 'clone-vds') {
+        TasksList.push(newTask);
+        newTask.worker = new Worker('worker-clone-vds.js?_=' + Date.now());
+        newTask.worker.onmessage = (e) => {
+            let _taskId = 0;
+            if (e.data && 'id' in e.data) _taskId = e.data.id;
+
+            const _task = TasksList.find((t) => t && t.id === _taskId);
+            if (!_task) return;
+
+            if (e.data.finish || e.data.error) {
+                removeTaskById(_taskId);
+            }
+
+            postMessage(e.data);
+        };
+        newTask.worker.postMessage({
+            id: newTask.id,
+            params: newTask.params,
+            apiUrl: newTask.apiUrl,
+            step,
+            status,
+            CreateVdsId: !isNaN(data.CreateVdsId) && data.CreateVdsId > 0 ? data.CreateVdsId : -1,
+            CopyBackupId: !isNaN(data.CopyBackupId) && data.CopyBackupId > 0 ? data.CopyBackupId : -1,
+            BackupId: !isNaN(data.BackupId) && data.BackupId > 0 ? data.BackupId : -1,
+        });
     }
-
-    addTask(newTask);
-    return true;
-};
-
-//=====================================================================================================================
-// find task by sourceId
-//=====================================================================================================================
-const findTaskBySourceIdOrInnerId = (sourceId: string, innerId: number) => {
-    if (!tasksList || !tasksList.length) return null;
-    return tasksList.find((t) => t && (t.sourceId === sourceId || t.innerId === innerId));
-};
-
-//=====================================================================================================================
-// add task to list
-//=====================================================================================================================
-const addTask = (task: Task) => {
-    tasksList.push(task);
 };
 
 //=====================================================================================================================
 // remove task from list
 //=====================================================================================================================
 const removeTaskById = (id: number) => {
-    tasksList = tasksList.filter((item) => {
-        if (item && item.innerId && item.innerId === id) {
-            item.innerId = -1;
-            if (item.worker && item.worker.terminate) item.worker.terminate();
+    TasksList = TasksList.filter((task) => {
+        if (task && task.id === id) {
+            if (task.worker && task.worker.terminate) {
+                task.worker.terminate();
+            }
+
             return false;
         }
 
@@ -137,99 +121,67 @@ const removeTaskById = (id: number) => {
 };
 
 //=====================================================================================================================
-// timer tick handler
+// command to check current process
 //=====================================================================================================================
-const timerTask = (isFirstTime = false) => {
-    console.log('-------------- cron worker tick');
-    // start all tasks
-    for (let idx in tasksList) {
-        const task = tasksList[idx];
-        if (!task || task.innerId < 0) continue;
+const checkTaskProcess = (id: number) => {
+    if (!TasksList || !TasksList.length) return;
 
-        console.log(JSON.stringify(task, null, 2));
+    for (let idx in TasksList) {
+        let task = TasksList[idx];
 
-        if (!isFirstTime) task.minutesLeft++;
-
-        if (task.minutesLeft !== 0 && task.minutesLeft < task.minutesPeriod) continue;
-
-        // need to start task
-        task.currentTries++;
-        if (!isFirstTime) task.minutesLeft = 0;
-
-        if (task.task === 'doubleRequest') {
-            // create worker for task
-            task.worker = new Worker('worker-double-request.js?_=' + Date.now());
-
-            // message handler
-            task.worker.onmessage = (e) => {
-                let _taskId = 0;
-                if ('taskId' in e.data) _taskId = e.data.taskId;
-
-                // find task
-                const _task = tasksList.find((t) => t && t.innerId === _taskId);
-                if (_task) {
-                    // success condition
-                    let isSuccessCondition = false;
-                    if (_task.successCondition && typeof _task.successCondition === 'function') {
-                        isSuccessCondition = _task.successCondition(e.data.answer);
-                        if (isSuccessCondition) {
-                            postMessage({
-                                sourceId: _task.sourceId,
-                                status: 'requested',
-                                answer: e.data.answer,
-                            });
-                        }
-                    }
-
-                    // kill this task
-                    let isNeedToKillTask = false;
-                    if (_task.currentTries >= _task.maxTries) isNeedToKillTask = true;
-
-                    if (isSuccessCondition || isNeedToKillTask) {
-                        _task.innerId = -1;
-                        if (_task.worker && _task.worker.terminate) _task.worker.terminate();
-                        postMessage({
-                            sourceId: _task.sourceId,
-                            status: 'failed',
-                            answer: e.data.answer,
-                            error: e.data.error,
-                        });
-                    }
-                }
-            };
-
-            // start task
+        if (task && task.worker && task.worker.postMessage) {
             task.worker.postMessage({
-                id: task.innerId,
-                url: task.url,
-                withCredentials: task.params.withCredentials,
-                paramsConstructor: task.paramsConstructor,
-                taskParams: task.paramsForDoubleRequest,
+                id,
+                params: 'check-service',
+                apiUrl: 'mock',
+                step: 'mock',
+                status: 'mock',
             });
         }
     }
+};
 
-    // filter for finished tasks
-    tasksList = tasksList.filter((item) => item && item.innerId > 0);
+//=====================================================================================================================
+// timer tick handler
+//=====================================================================================================================
+const timerTaskHandler = () => {
+    const forDelete: number[] = [];
+
+    for (let idx in TasksList) {
+        let task = null;
+        if (TasksList[idx] && TasksList[idx].task === 'clone-vds') {
+            task = TasksList[idx] as CloneVdsTask;
+        }
+
+        task.minutesLeft++;
+
+        if (task.minutesLeft > 60 * 8) {
+            forDelete.push(task.id);
+        }
+    }
+
+    for (let i = 0; i < forDelete.length; i++) {
+        removeTaskById(forDelete[i]);
+    }
 
     // finally - restart timer
-    timer = setTimeout(timerTask, timeOut);
+    Timer = setTimeout(timerTaskHandler, TimeOut);
 };
 
 //=====================================================================================================================
 // start working worker (start timer)
 //=====================================================================================================================
 const startTimer = () => {
-    if (timer) stopTimer();
-    timerTask(true);
+    if (Timer) stopTimer();
+    timerTaskHandler();
 };
 
 //=====================================================================================================================
 // stop working worker (stop timer)
 //=====================================================================================================================
 const stopTimer = () => {
-    clearTimeout(timer);
-    timer = null;
+    clearTimeout(Timer);
+    Timer = null;
 };
 
 //=====================================================================================================================
@@ -238,8 +190,10 @@ const stopTimer = () => {
 onmessage = (e) => {
     if (e.data === 'start') startTimer();
     else if (e.data === 'stop') stopTimer();
-    else if (typeof e.data === 'object' && e.data.task === 'remove-task') removeTaskById(e.data.id);
-    else if (typeof e.data === 'object' && e.data.task) createTask(e.data);
+    else if (typeof e.data === 'object' && e.data.task === 'check-service' && e.data.id) checkTaskProcess(e.data.id);
+    else if (typeof e.data === 'object' && e.data.task === 'remove-task' && e.data.id) removeTaskById(e.data.id);
+    else if (typeof e.data === 'object' && e.data.task && e.data.id && e.data.params && e.data.apiUrl)
+        createTask(e.data);
 };
 
 //=====================================================================================================================
