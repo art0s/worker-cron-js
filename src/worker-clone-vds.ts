@@ -7,9 +7,10 @@ let CloneVdsId = null;
 let Params = null;
 let ApiUrl = '';
 let FailedTryCount = 0;
-const FailedTryCountMax = 100;
+const FailedTryCountMax = 12;
 const FailedTryPause = 300000;
 let LastError: any = null;
+
 let CreateVdsId = -1;
 let BackupId = -1;
 let CopyBackupId = -1;
@@ -111,6 +112,8 @@ const restartProcess = (continueFunction: Function) => {
 // starts clone of VDS
 //=====================================================================================================================
 const createBackup = () => {
+    if (!isNaN(BackupId) && BackupId > 0) return;
+
     IsCheckingStatus = false;
     const _url = '/service/update/' + CloneVdsId;
 
@@ -193,46 +196,57 @@ const createBackupStatus = () => {
                 }
 
                 if (_backup) {
-                    BackupId = _backup.service_id;
+                    BackupId = parseInt(_backup.service_id, 10);
+                    if (isNaN(BackupId) || BackupId < 0) {
+                        postMessage({
+                            id: CloneVdsId,
+                            error: 'service/status_error',
+                        });
+                        return;
+                    }
+
                     LastError = null;
                     FailedTryCount = 0;
 
                     if (_backup.service_status === 'active') {
-                        if (Params.dcToMove) {
-                            postMessage({
-                                id: CloneVdsId,
-                                step: 'backup/copy',
-                                status: 'request/type_unblock',
-                                BackupId,
-                            });
+                        // if not creating backup yet
+                        if (CopyBackupId < 0) {
+                            if (Params.dcToMove) {
+                                    postMessage({
+                                        id: CloneVdsId,
+                                        step: 'backup/copy',
+                                        status: 'request/type_unblock',
+                                        BackupId,
+                                    });
 
-                            copyBackup();
-                        } else {
-                            postMessage({
-                                id: CloneVdsId,
-                                step: 'server/create_title',
-                                status: 'request/type_unblock',
-                                BackupId,
-                            });
+                                    copyBackup();
+                            } else {
+                                postMessage({
+                                    id: CloneVdsId,
+                                    step: 'server/create_title',
+                                    status: 'request/type_unblock',
+                                    BackupId,
+                                });
 
-                            createVds();
+                                createVds();
+                            }
                         }
                     } else if (_backup.service_status === 'error') {
                         postMessage({
                             id: CloneVdsId,
                             error: 'service/status_error',
                         });
-                    } else if (_backup.service_status_text) {
+                    } else {
                         postMessage({
                             id: CloneVdsId,
-                            status: _backup.service_status_text,
+                            status: _backup.service_status_text || 'request/status_processing',
                             BackupId,
                         });
 
                         restartProcess(createBackupStatus);
                     }
                 } else {
-                    errorHandler(createBackupStatus)(jsonGet);
+                    restartProcess(createBackupStatus);
                 }
             } else {
                 errorHandler(createBackupStatus)(jsonGet);
@@ -246,6 +260,8 @@ const createBackupStatus = () => {
 // copy VDS to DC
 //=====================================================================================================================
 const copyBackup = () => {
+    if (!isNaN(CopyBackupId) && CopyBackupId > 0) return;
+
     if (isNaN(BackupId) || !BackupId || BackupId < 0) {
         postMessage({
             id: CloneVdsId,
@@ -280,7 +296,16 @@ const copyBackup = () => {
                             jsonPost['service'] &&
                             jsonPost['service']['service_id']
                         ) {
-                            CopyBackupId = jsonPost['service']['service_id'];
+                            CopyBackupId = parseInt(jsonPost['service']['service_id'], 10);
+
+                            if (isNaN(CopyBackupId) || CopyBackupId < 0) {
+                                postMessage({
+                                    id: CloneVdsId,
+                                    error: 'service/status_error',
+                                });
+                        
+                                return;
+                            }
 
                             postMessage({
                                 id: CloneVdsId,
@@ -354,10 +379,10 @@ const copyBackupStatus = () => {
                         id: CloneVdsId,
                         error: 'service/status_error',
                     });
-                } else if (_backup.service_status_text) {
+                } else {
                     postMessage({
                         id: CloneVdsId,
-                        status: _backup.service_status_text,
+                        status: _backup.service_status_text || 'request/status_processing',
                     });
 
                     restartProcess(copyBackupStatus);
@@ -374,6 +399,8 @@ const copyBackupStatus = () => {
 // create VDS
 //=====================================================================================================================
 const createVds = () => {
+    if (!isNaN(CreateVdsId) && CreateVdsId > 0) return;
+
     let _backupId = -1;
     if (BackupId > 0) _backupId = BackupId;
     if (CopyBackupId > 0) _backupId = CopyBackupId;
@@ -432,7 +459,16 @@ const createVds = () => {
                             jsonPost['service'] &&
                             jsonPost['service']['service_id']
                         ) {
-                            CreateVdsId = jsonPost['service']['service_id'];
+                            CreateVdsId = parseInt(jsonPost['service']['service_id'], 10);
+
+                            if (isNaN(CreateVdsId) || CreateVdsId < 0) {
+                                postMessage({
+                                    id: CloneVdsId,
+                                    error: 'service/status_error',
+                                });
+                        
+                                return;
+                            }
 
                             postMessage({
                                 id: CloneVdsId,
@@ -515,10 +551,10 @@ const createVdsStatus = () => {
                         id: CloneVdsId,
                         error: 'service/status_error',
                     });
-                } else if (_server.service_status_text) {
+                } else {
                     postMessage({
                         id: CloneVdsId,
-                        status: _server.service_status_text,
+                        status: _server.service_status_text || 'request/status_processing',
                     });
 
                     restartProcess(createVdsStatus);
@@ -640,37 +676,53 @@ const deleteBackups = () => {
 };
 
 //=====================================================================================================================
+// delete all backups
+//=====================================================================================================================
+const restartProcessWithNewTimers = (processName) => {
+    if (ErrorTimer) {
+        clearTimeout(ErrorTimer);
+        ErrorTimer = 0;
+    }
+
+    if (ProcessTimer) {
+        clearTimeout(ProcessTimer);
+        ProcessTimer = 0;
+    }
+
+    restartProcess(processName);
+};
+
+//=====================================================================================================================
 // onMessage handler
 //=====================================================================================================================
 onmessage = (e) => {
     if (e.data && e.data.id && e.data.params && e.data.apiUrl && e.data.step && e.data.status) {
+        //
+        // request to check current status of service
+        //
         if (e.data.params === 'check-service') {
             let func = null;
-            if (e.data.id === BackupId) {
+            if (e.data.id === BackupId && CopyBackupId < 0 && CreateVdsId < 0) {
+                console.log('----------------------- ON MESSAGE 1')
                 func = createBackupStatus;
-            } else if (e.data.id === CopyBackupId) {
+            } else if (e.data.id === CopyBackupId && CreateVdsId < 0) {
+                console.log('----------------------- ON MESSAGE 2')
                 func = copyBackupStatus;
             } else if (e.data.id === CreateVdsId) {
+                console.log('----------------------- ON MESSAGE 3')
                 func = createVdsStatus;
             }
 
-            if (IsCheckingStatus && func && typeof func === 'function') {
-                if (ErrorTimer) {
-                    clearTimeout(ErrorTimer);
-                    ErrorTimer = 0;
-                }
-
-                if (ProcessTimer) {
-                    clearTimeout(ProcessTimer);
-                    ProcessTimer = 0;
-                }
-
-                func();
+            if (func && typeof func === 'function') {
+                restartProcessWithNewTimers(func);
             }
 
             return;
         }
 
+        //
+        // other requests
+        //
         CloneVdsId = e.data.id;
         Params = e.data.params;
         ApiUrl = e.data.apiUrl;
@@ -683,7 +735,7 @@ onmessage = (e) => {
             if (e.data.status === 'request/type_unblock') {
                 createBackup();
             } else {
-                createBackupStatus();
+                restartProcessWithNewTimers(createBackupStatus);
             }
         }
 
@@ -691,7 +743,7 @@ onmessage = (e) => {
             if (e.data.status === 'request/type_unblock') {
                 copyBackup();
             } else {
-                copyBackupStatus();
+                restartProcessWithNewTimers(copyBackupStatus);
             }
         }
 
@@ -699,7 +751,7 @@ onmessage = (e) => {
             if (e.data.status === 'request/type_unblock') {
                 createVds();
             } else {
-                createVdsStatus();
+                restartProcessWithNewTimers(createVdsStatus);
             }
         }
 

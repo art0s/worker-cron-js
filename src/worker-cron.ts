@@ -63,6 +63,7 @@ const createTask = (data: any) => {
     if (!data || !data.task || !data.id) return;
 
     const { id, task, params, apiUrl, step, status } = data;
+    console.log('============ create task', id, findTaskById(id))
     if (findTaskById(id)) return;
 
     const newTask: CloneVdsTask = {
@@ -78,8 +79,9 @@ const createTask = (data: any) => {
         TasksList.push(newTask);
         newTask.worker = new Worker('worker-clone-vds.js?_=' + Date.now());
         newTask.worker.onmessage = (e) => {
-            let _taskId = 0;
-            if (e.data && 'id' in e.data) _taskId = e.data.id;
+            let _taskId = -1;
+            if (e.data && 'id' in e.data) _taskId = parseInt(e.data.id, 10);
+            if (isNaN(_taskId) || _taskId < 0) return;
 
             const _task = TasksList.find((t) => t && t.id === _taskId);
             if (!_task) return;
@@ -90,6 +92,7 @@ const createTask = (data: any) => {
 
             postMessage(e.data);
         };
+
         newTask.worker.postMessage({
             id: newTask.id,
             params: newTask.params,
@@ -107,17 +110,20 @@ const createTask = (data: any) => {
 // remove task from list
 //=====================================================================================================================
 const removeTaskById = (id: number) => {
-    TasksList = TasksList.filter((task) => {
+    if (!TasksList || !TasksList.length) return;
+
+    for (let i = 0; i < TasksList.length; i++) {
+        const task = TasksList[i];
+
         if (task && task.id === id) {
             if (task.worker && task.worker.terminate) {
                 task.worker.terminate();
             }
 
-            return false;
+            TasksList.splice(i, 1);
+            return;
         }
-
-        return true;
-    });
+    }
 };
 
 //=====================================================================================================================
@@ -155,7 +161,7 @@ const timerTaskHandler = () => {
 
         task.minutesLeft++;
 
-        if (task.minutesLeft > 60 * 8) {
+        if (task.minutesLeft > 60 * 3) {
             forDelete.push(task.id);
         }
     }
