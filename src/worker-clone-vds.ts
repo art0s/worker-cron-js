@@ -703,13 +703,10 @@ onmessage = (e) => {
         if (e.data.params === 'check-service') {
             let func = null;
             if (e.data.id === BackupId && CopyBackupId < 0 && CreateVdsId < 0) {
-                console.log('----------------------- ON MESSAGE 1')
                 func = createBackupStatus;
             } else if (e.data.id === CopyBackupId && CreateVdsId < 0) {
-                console.log('----------------------- ON MESSAGE 2')
                 func = copyBackupStatus;
             } else if (e.data.id === CreateVdsId) {
-                console.log('----------------------- ON MESSAGE 3')
                 func = createVdsStatus;
             }
 
