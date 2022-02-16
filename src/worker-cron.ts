@@ -63,7 +63,6 @@ const createTask = (data: any) => {
     if (!data || !data.task || !data.id) return;
 
     const { id, task, params, apiUrl, step, status } = data;
-    console.log('============ create task', id, findTaskById(id))
     if (findTaskById(id)) return;
 
     const newTask: CloneVdsTask = {
