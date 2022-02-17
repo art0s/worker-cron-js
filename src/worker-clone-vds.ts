@@ -7,7 +7,7 @@ let CloneVdsId = null;
 let Params = null;
 let ApiUrl = '';
 let FailedTryCount = 0;
-const FailedTryCountMax = 12;
+const FailedTryCountMax = 3;
 const FailedTryPause = 300000;
 let LastError: any = null;
 
@@ -105,7 +105,7 @@ const errorHandler = (continueFunction: Function) => {
 //=====================================================================================================================
 const restartProcess = (continueFunction: Function) => {
     if (ProcessTimer) clearTimeout(ProcessTimer);
-    ProcessTimer = setTimeout(continueFunction, 30000);
+    ProcessTimer = setTimeout(continueFunction, 10000);
 };
 
 //=====================================================================================================================
