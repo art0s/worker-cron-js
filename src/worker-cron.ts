@@ -103,7 +103,7 @@ const createBackup = (task: CloneVdsTask) => {
             if (json && json['_csrf'] && json['model'] && json['status'] === 'form') {
                 const _post = { _csrf: json['_csrf'] };
                 _post[json['model']] = {
-                    backup_create: true,
+                    backup_create: 1,
                     reinstall: 0,
                 };
 
@@ -700,7 +700,7 @@ const makeRequest = (
     callBackFail: (error: string) => void
 ) => {
     const transport = new XMLHttpRequest();
-    transport.timeout = 5000;
+    transport.timeout = 60000;
     transport.responseType = 'json';
     transport.withCredentials = true;
 
