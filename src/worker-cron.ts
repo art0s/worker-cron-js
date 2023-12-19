@@ -89,11 +89,11 @@ const createCloneTask = (data: any) => {
 //=====================================================================================================================
 const createBackup = (task: CloneVdsTask) => {
     // test task object
-    if (!task || !task.id) return;
+    if (!task || !task.id || !task.params || !task.params.acc) return;
     // if BackupId already exists
     if (!isNaN(task.BackupId) && task.BackupId > 0) return;
 
-    const _url = `${task.apiUrl}/service/update/${task.id}`;
+    const _url = `${task.apiUrl}/service/create/15`;
 
     makeRequest(
         _url,
@@ -103,7 +103,8 @@ const createBackup = (task: CloneVdsTask) => {
             if (json && json['_csrf'] && json['model'] && json['status'] === 'form') {
                 const _post = { _csrf: json['_csrf'] };
                 _post[json['model']] = {
-                    backup_create: 1,
+                    service_id: task.id,
+                    account_id: task.params.acc,
                     reinstall: 0,
                 };
 
