@@ -113,7 +113,7 @@ const createBackup = (task: CloneVdsTask) => {
                     'POST',
                     objToFormData(_post),
                     (jsonPost) => {
-                        if (jsonPost && jsonPost['status'] === 'ok' && jsonPost['request']) {
+                        if (jsonPost && jsonPost['status'] === 'ok' && (jsonPost['request'] || jsonPost['service'])) {
                             postMessage({
                                 id: task.id,
                                 step: 'service/creating_backup',
